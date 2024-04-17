@@ -1,0 +1,73 @@
+use btleplug::api::{Central, Manager as _, Peripheral};
+use serde_json::{json, to_string};
+use std::{thread, time::Duration};
+use websocket::{ClientBuilder, Message};
+
+// Function to detect Joycons
+fn detect_joycons() -> Vec<Peripheral> {
+    let manager = btleplug::bluez::Manager::new().unwrap();
+    let adapters = manager.adapters().unwrap();
+    let mut joycons = vec![];
+
+    for adapter in adapters {
+        let mut central = adapter.connect().unwrap();
+        joycons.extend(central.peripherals().unwrap());
+    }
+
+    joycons
+}
+
+// Function to connect to SlimeVR server via WebSocket
+async fn connect_to_slimevr() -> Result<websocket::sender::Writer<std::net::TcpStream>, websocket::WebSocketError> {
+    let server_address = "ws://127.0.0.1:6969";
+    let client = ClientBuilder::new(server_address)
+        .unwrap()
+        .connect_insecure()
+        .unwrap()
+        .await?;
+    Ok(client)
+}
+
+// Function to simulate reading data from the Joycon
+fn read_joycon_data(_joycon: &Peripheral) -> Vec<u8> {
+    // Simulated Joycon data
+    vec![0x01, 0x02, 0x03, 0x04]
+}
+
+// Function to simulate sending data to SlimeVR server via WebSocket
+async fn send_data_to_slimevr(client: &mut websocket::sender::Writer<std::net::TcpStream>, data: Vec<u8>) {
+    let json_data = to_string(&json!({
+        "type": "tracker",
+        "data": data,
+    })).unwrap();
+    client.send(Message::text(json_data)).unwrap();
+}
+
+fn main() {
+    // Connect to SlimeVR server via WebSocket
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut client = runtime.block_on(connect_to_slimevr()).unwrap();
+
+    println!("Connected to SlimeVR server.");
+
+    // Continuously detect Joycons
+    loop {
+        let joycons = detect_joycons();
+
+        // Process each detected Joycon
+        for joycon in joycons {
+            println!("Joycon detected: {:?}", joycon.properties().unwrap().local_name);
+
+            // Continuously read and send data from the Joycon
+            loop {
+                let data = read_joycon_data(&joycon);
+                if !data.is_empty() {
+                    println!("Sending Joycon data to SlimeVR server: {:?}", data);
+                    runtime.block_on(send_data_to_slimevr(&mut client, data.clone()));
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+}
